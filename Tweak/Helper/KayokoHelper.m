@@ -296,6 +296,24 @@ static void kayokoPaste() {
     [[UIApplication sharedApplication] sendAction:@selector(paste:) to:nil from:nil forEvent:nil];
 }
 
+@interface KayokoKeyboardObserver : NSObject
+@end
+
+@implementation KayokoKeyboardObserver
+
+- (void)keyboardWillHide:(NSNotification *)notification {
+    NSDictionary *userInfo = [notification userInfo];
+    BOOL isLocalKeyboard = [userInfo[UIKeyboardIsLocalUserInfoKey] boolValue];
+    if (!isLocalKeyboard) {
+        return;
+    }
+
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         (CFStringRef)kNotificationKeyCoreHide, nil, nil, YES);
+}
+
+@end
+
 #pragma mark - Preferences
 
 /**
@@ -305,7 +323,12 @@ static void load_preferences() {
     kayokoHelperPreferences = [[NSUserDefaults alloc]
         initWithSuiteName:[NSString
                               stringWithFormat:@"/var/mobile/Library/Preferences/%@.plist", kPreferencesIdentifier]];
+
+#if THEOS_PACKAGE_SCHEME_ROOTHIDE
+    libSandy_applyProfile("Kayoko_RootHide");
+#else
     libSandy_applyProfile("Kayoko");
+#endif
 
     [kayokoHelperPreferences registerDefaults:@{
         kPreferenceKeyEnabled : @(kPreferenceKeyEnabledDefaultValue),
@@ -413,4 +436,12 @@ __attribute((constructor)) static void initialize() {
                                         (CFNotificationCallback)kayokoPaste, (CFStringRef)kNotificationKeyHelperPaste,
                                         NULL, (CFNotificationSuspensionBehavior)CFNotificationSuspensionBehaviorDrop);
     }
+
+    static KayokoKeyboardObserver *observer;
+    observer = [[KayokoKeyboardObserver alloc] init];
+
+    [[NSNotificationCenter defaultCenter] addObserver:observer
+                                             selector:@selector(keyboardWillHide:)
+                                                 name:UIKeyboardWillHideNotification
+                                               object:nil];
 }

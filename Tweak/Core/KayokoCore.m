@@ -8,14 +8,19 @@
 #import "KayokoCore.h"
 
 #import <AudioToolbox/AudioToolbox.h>
+#import <CoreFoundation/CoreFoundation.h>
+#import <QuartzCore/QuartzCore.h>
+
 #import <HBLog.h>
-#import <rootless.h>
+#import <libroot.h>
 #import <substrate.h>
 
 #import "NotificationKeys.h"
 #import "PasteboardManager.h"
 #import "PreferenceKeys.h"
 #import "Views/KayokoView.h"
+
+#define kMinimumFeedbackInterval 0.6
 
 KayokoView *kayokoView = nil;
 
@@ -34,6 +39,9 @@ BOOL kayokoPrefsPlayHapticFeedback = NO;
 CGFloat kayokoPrefsHeightInPoints = 420;
 
 static BOOL isInPasteProgress = NO;
+
+static NSTimeInterval lastPasteFeedbackOccurred = 0;
+static NSTimeInterval lastCopyFeedbackOccurred = 0;
 
 @interface UIStatusBarStyleRequest : NSObject
 @property(nonatomic, assign, readonly) long long style;
@@ -80,7 +88,7 @@ static void kayokoPasteWillStart() { isInPasteProgress = YES; }
 /**
  * Receives the notification that the pasteboard changed from the daemon and pulls the new changes.
  */
-static void kayokoCopy() {
+static void _kayokoCopy() {
     [[PasteboardManager sharedInstance] pullPasteboardChanges];
     if (isInPasteProgress) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -88,13 +96,19 @@ static void kayokoCopy() {
         });
         return;
     }
+    NSTimeInterval now = CACurrentMediaTime();
+    if (fabs(now - lastCopyFeedbackOccurred) < kMinimumFeedbackInterval) {
+        return;
+    }
+    lastCopyFeedbackOccurred = now;
     if (kayokoPrefsPlaySoundEffects) {
         static dispatch_once_t onceToken;
         static SystemSoundID soundID;
         dispatch_once(&onceToken, ^{
           AudioServicesCreateSystemSoundID(
-              (__bridge CFURLRef)[NSURL
-                  fileURLWithPath:ROOT_PATH_NS(@"/Library/PreferenceBundles/KayokoPreferences.bundle/Copy.aiff")],
+              (__bridge CFURLRef)
+                  [NSURL fileURLWithPath:JBROOT_PATH_NSSTRING(
+                                             @"/Library/PreferenceBundles/KayokoPreferences.bundle/Copy.aiff")],
               &soundID);
         });
         AudioServicesPlaySystemSound(soundID);
@@ -102,6 +116,12 @@ static void kayokoCopy() {
     if (kayokoPrefsPlayHapticFeedback) {
         AudioServicesPlaySystemSound(1519);
     }
+}
+
+static void kayokoCopy() {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      _kayokoCopy();
+    });
 }
 
 /**
@@ -221,13 +241,19 @@ static void load_preferences() {
 #pragma mark - Sound effects
 
 static void kayokoPaste() {
+    NSTimeInterval now = CACurrentMediaTime();
+    if (fabs(now - lastPasteFeedbackOccurred) < kMinimumFeedbackInterval) {
+        return;
+    }
+    lastPasteFeedbackOccurred = now;
     if (kayokoPrefsPlaySoundEffects) {
         static dispatch_once_t onceToken;
         static SystemSoundID soundID;
         dispatch_once(&onceToken, ^{
           AudioServicesCreateSystemSoundID(
-              (__bridge CFURLRef)[NSURL
-                  fileURLWithPath:ROOT_PATH_NS(@"/Library/PreferenceBundles/KayokoPreferences.bundle/Paste.aiff")],
+              (__bridge CFURLRef)
+                  [NSURL fileURLWithPath:JBROOT_PATH_NSSTRING(
+                                             @"/Library/PreferenceBundles/KayokoPreferences.bundle/Paste.aiff")],
               &soundID);
         });
         AudioServicesPlaySystemSound(soundID);
@@ -263,7 +289,7 @@ __attribute((constructor)) static void initialize() {
 
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(), NULL, (CFNotificationCallback)kayokoCopy,
-            (CFStringRef)kNotificationKeyObserverPasteboardChanged, NULL,
+            CFSTR("com.apple.pasteboard.notify.changed"), NULL,
             (CFNotificationSuspensionBehavior)CFNotificationSuspensionBehaviorDeliverImmediately);
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(), NULL, (CFNotificationCallback)show,
